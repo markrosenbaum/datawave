@@ -69,7 +69,7 @@ public class ExpansionThresholdQueryTest extends AbstractFunctionalQuery {
         // NOTE: Issue #156 addresses an issue where the ivarator is not configured
         // it does not throw an exception; just return no results
         // try {
-        // runTest(query, expect);
+        // generateResponse(query, expect);
         // Assert.fail("exception expected");
         // } catch (DatawaveFatalQueryException e) {
         // // expected
