@@ -19,11 +19,14 @@ import datawave.query.jexl.JexlNodeFactory;
 import datawave.query.jexl.functions.arguments.JexlArgumentDescriptor;
 import datawave.query.jexl.visitors.EventDataQueryExpressionVisitor;
 import datawave.query.util.DateIndexHelper;
+import datawave.query.util.GeoWaveUtils;
 import datawave.query.util.MetadataHelper;
 import mil.nga.giat.geowave.core.geotime.GeometryUtils;
+import mil.nga.giat.geowave.core.index.ByteArrayId;
 import mil.nga.giat.geowave.core.index.ByteArrayRange;
 import mil.nga.giat.geowave.core.index.NumericIndexStrategy;
 import mil.nga.giat.geowave.core.index.sfc.data.MultiDimensionalNumericData;
+import mil.nga.giat.geowave.core.index.sfc.tiered.TieredSFCIndexStrategy;
 import org.apache.accumulo.core.client.TableNotFoundException;
 import org.apache.commons.jexl2.parser.ASTEQNode;
 import org.apache.commons.jexl2.parser.ASTFunctionNode;
@@ -33,10 +36,12 @@ import org.apache.commons.jexl2.parser.JexlNode;
 import org.apache.commons.jexl2.parser.ParserTreeConstants;
 import org.apache.log4j.Logger;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -77,9 +82,9 @@ public class GeoWaveFunctionsDescriptor implements JexlFunctionArgumentDescripto
                     
                     JexlNode indexNode;
                     if (envelopes.size() == 1) {
-                        indexNode = getIndexNode(args.get(0), envelopes.get(0), config, helper);
+                        indexNode = getIndexNode(args.get(0), geom, envelopes.get(0), config, helper);
                     } else {
-                        indexNode = getIndexNode(args.get(0), envelopes, config, helper);
+                        indexNode = getIndexNode(args.get(0), geom, envelopes, config, helper);
                     }
                     
                     return indexNode;
@@ -98,49 +103,49 @@ public class GeoWaveFunctionsDescriptor implements JexlFunctionArgumentDescripto
             }
         }
         
-        protected static JexlNode getIndexNode(JexlNode node, Envelope env, ShardQueryConfiguration config, MetadataHelper helper) {
+        protected static JexlNode getIndexNode(JexlNode node, Geometry geometry, Envelope env, ShardQueryConfiguration config, MetadataHelper helper) {
             if (node.jjtGetNumChildren() > 0) {
                 List<JexlNode> list = Lists.newArrayList();
                 for (int i = 0; i < node.jjtGetNumChildren(); i++) {
                     JexlNode kid = node.jjtGetChild(i);
                     if (kid.image != null) {
-                        list.add(getIndexNode(kid.image, env, config, helper));
+                        list.add(getIndexNode(kid.image, geometry, env, config, helper));
                     }
                 }
                 if (!list.isEmpty()) {
                     return JexlNodeFactory.createOrNode(list);
                 }
             } else if (node.image != null) {
-                return getIndexNode(node.image, env, config, helper);
+                return getIndexNode(node.image, geometry, env, config, helper);
             }
             return node;
         }
         
-        protected static JexlNode getIndexNode(JexlNode node, List<Envelope> envs, ShardQueryConfiguration config, MetadataHelper helper) {
+        protected static JexlNode getIndexNode(JexlNode node, Geometry geometry, List<Envelope> envs, ShardQueryConfiguration config, MetadataHelper helper) {
             if (node.jjtGetNumChildren() > 0) {
                 List<JexlNode> list = Lists.newArrayList();
                 for (int i = 0; i < node.jjtGetNumChildren(); i++) {
                     JexlNode kid = node.jjtGetChild(i);
                     if (kid.image != null) {
-                        list.add(getIndexNode(kid.image, envs, config, helper));
+                        list.add(getIndexNode(kid.image, geometry, envs, config, helper));
                     }
                 }
                 if (!list.isEmpty()) {
                     return JexlNodeFactory.createOrNode(list);
                 }
             } else if (node.image != null) {
-                return getIndexNode(node.image, envs, config, helper);
+                return getIndexNode(node.image, geometry, envs, config, helper);
             }
             return node;
         }
         
-        protected static JexlNode getIndexNode(String fieldName, Envelope env, ShardQueryConfiguration config, MetadataHelper helper) {
+        protected static JexlNode getIndexNode(String fieldName, Geometry geometry, Envelope env, ShardQueryConfiguration config, MetadataHelper helper) {
             List<Envelope> envs = new ArrayList<>();
             envs.add(env);
-            return getIndexNode(fieldName, envs, config, helper);
+            return getIndexNode(fieldName, geometry, envs, config, helper);
         }
         
-        protected static JexlNode getIndexNode(String fieldName, List<Envelope> envs, ShardQueryConfiguration config, MetadataHelper helper) {
+        protected static JexlNode getIndexNode(String fieldName, Geometry geometry, List<Envelope> envs, ShardQueryConfiguration config, MetadataHelper helper) {
             NumericIndexStrategy indexStrategy;
             int maxExpansion;
             if (isOnlyPointType(fieldName, helper)) {
@@ -155,7 +160,12 @@ public class GeoWaveFunctionsDescriptor implements JexlFunctionArgumentDescripto
             int maxRanges = maxExpansion / envs.size();
             for (Envelope env : envs) {
                 for (MultiDimensionalNumericData range : GeometryUtils.basicConstraintsFromEnvelope(env).getIndexConstraints(indexStrategy)) {
-                    allRanges.addAll(indexStrategy.getQueryRanges(range, maxRanges));
+                    List<ByteArrayRange> byteArrayRanges = indexStrategy.getQueryRanges(range, maxRanges);
+                    if (config.isOptimizeGeoWaveRanges()) {
+                        byteArrayRanges = GeoWaveUtils.optimizeByteArrayRanges(geometry, byteArrayRanges, config.getGeoWaveRangeSplitThreshold(),
+                                        config.getGeoWaveMaxRangeOverlap());
+                    }
+                    allRanges.addAll(byteArrayRanges);
                 }
             }
             allRanges = ByteArrayRange.mergeIntersections(allRanges, ByteArrayRange.MergeOperation.UNION);
@@ -333,4 +343,5 @@ public class GeoWaveFunctionsDescriptor implements JexlFunctionArgumentDescripto
         }
         return Arrays.asList(geom.getEnvelopeInternal());
     }
+    
 }

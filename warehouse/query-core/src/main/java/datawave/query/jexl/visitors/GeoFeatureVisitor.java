@@ -22,7 +22,7 @@ public class GeoFeatureVisitor extends BaseVisitor {
     private static final Logger log = ThreadConfigurableLogger.getLogger(GeoFeatureVisitor.class);
     
     private Set<QueryGeometry> geoFeatures;
-    private GeometryJSON geoJson = new GeometryJSON();
+    private GeometryJSON geoJson = new GeometryJSON(10);
     private WKTReader wktReader = new WKTReader();
     
     private boolean isLuceneQuery;
