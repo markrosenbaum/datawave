@@ -1119,6 +1119,8 @@ public class DefaultQueryPlanner extends QueryPlanner {
                 if (log.isDebugEnabled()) {
                     logQuery(queryTree, "Query after expanding ranges:");
                 }
+                // TODO: Add a visitor which removes GeoWave geohashes which do not intersect with the query geometry
+
                 queryTree = PushFunctionsIntoExceededValueRanges.pushFunctions(queryTree, metadataHelper, config.getDatatypeFilter());
                 if (log.isDebugEnabled()) {
                     logQuery(queryTree, "Query after expanding pushing functions into exceeded value ranges:");

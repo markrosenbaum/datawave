@@ -116,7 +116,7 @@ public class GeoWaveUtils {
                                 
                                 // make sure that the scaled id is within the bounds of the map
                                 // note: all cells for tiers 0 and 1 are within the bounds of the map
-                                if (inBounds(scaledBounds) || curTier <= 1) {
+                                if (curTier <= 1 || inBounds(scaledBounds)) {
                                     // @formatter:off
                                     Geometry scaledGeom = gf.toGeometry(
                                             new Envelope(
@@ -150,11 +150,14 @@ public class GeoWaveUtils {
                 }
             }
             
-            if (byteArrayRanges.isEmpty() && rangeToGeometry(tier, min, max).intersects(queryGeometry)) {
-                byteArrayRanges.add(byteArrayRange);
+            if (byteArrayRanges.isEmpty()) {
+                if (rangeToGeometry(tier, min, max).intersects(queryGeometry))
+                    byteArrayRanges.add(byteArrayRange);
             } else {
-                byteArrayRanges = mergeContiguousRanges(byteArrayRanges, longBuffer);
-                byteArrayRanges = splitLargeRanges(byteArrayRanges, queryGeometry, maxRangeOverlap, longBuffer);
+                if (byteArrayRanges.size() > 1)
+                    byteArrayRanges = mergeContiguousRanges(byteArrayRanges, longBuffer);
+                if (!byteArrayRanges.isEmpty())
+                    byteArrayRanges = splitLargeRanges(byteArrayRanges, queryGeometry, maxRangeOverlap, longBuffer);
             }
         }
         
@@ -391,10 +394,12 @@ public class GeoWaveUtils {
      * @return
      */
     public static boolean inBounds(MultiDimensionalNumericData bounds) {
-        return bounds.getMinValuesPerDimension()[0] >= -180 && bounds.getMinValuesPerDimension()[0] <= 180 && bounds.getMaxValuesPerDimension()[0] >= -180
-                        && bounds.getMaxValuesPerDimension()[0] <= 180 && bounds.getMinValuesPerDimension()[1] >= -90
-                        && bounds.getMinValuesPerDimension()[1] <= 90 && bounds.getMaxValuesPerDimension()[1] >= -90
-                        && bounds.getMaxValuesPerDimension()[1] <= 90;
+        // @formatter:off
+        return bounds.getMinValuesPerDimension()[0] >= -180 && bounds.getMinValuesPerDimension()[0] <= 180 &&
+                bounds.getMaxValuesPerDimension()[0] >= -180 && bounds.getMaxValuesPerDimension()[0] <= 180 &&
+                bounds.getMinValuesPerDimension()[1] >= -90 && bounds.getMinValuesPerDimension()[1] <= 90 &&
+                bounds.getMaxValuesPerDimension()[1] >= -90 && bounds.getMaxValuesPerDimension()[1] <= 90;
+        // @formatter:on
     }
     
     /**
@@ -414,7 +419,7 @@ public class GeoWaveUtils {
         for (ByteArrayId byteArrayId : byteArrayIds) {
             MultiDimensionalNumericData bounds = GeometryNormalizer.indexStrategy.getRangeForId(byteArrayId);
             
-            if ((inBounds(bounds) || tier <= 1)) {
+            if (tier <= 1 || inBounds(bounds)) {
                 // @formatter:off
                 geometries.add(gf.toGeometry(
                         new Envelope(
@@ -469,8 +474,8 @@ public class GeoWaveUtils {
                 long scale = (long) Math.pow(2.0, 2.0 * (tier - tierMinMax.tier));
                 
                 if (range >= scale) {
-                    long scaledMin = (long) Math.ceil((double) min / scale);
-                    long scaledMax = max / scale;
+                    long scaledMin = (long) Math.ceil((double) tierMinMax.min / scale);
+                    long scaledMax = tierMinMax.max / scale;
                     
                     boolean simplifiedRanges = false;
                     long subRangeMin = scaledMin * scale;
@@ -479,7 +484,7 @@ public class GeoWaveUtils {
                     for (long scaledPos = scaledMin; scaledPos <= scaledMax; scaledPos++) {
                         long nextSubRangeMax = (scaledPos * scale + scale - 1);
                         
-                        if (nextSubRangeMax <= max) {
+                        if (nextSubRangeMax <= tierMinMax.max) {
                             simplifiedRanges = true;
                             subRangeMax = nextSubRangeMax;
                             
