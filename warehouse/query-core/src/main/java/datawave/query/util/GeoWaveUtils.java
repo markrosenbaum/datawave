@@ -152,8 +152,7 @@ public class GeoWaveUtils {
         if (tier == 0) {
             byteArrayRanges.add(byteArrayRange);
         } else {
-            longBuffer = (longBuffer != null && longBuffer.array().length == Long.BYTES) ? longBuffer : ByteBuffer.allocate(Long.BYTES);
-            longBuffer.clear();
+            longBuffer = initLongBuffer(longBuffer);
             
             long min = decodePosition(byteArrayRange.getStart(), longBuffer);
             long max = decodePosition(byteArrayRange.getEnd(), longBuffer);
@@ -396,7 +395,9 @@ public class GeoWaveUtils {
     public static long decodePosition(ByteArrayId byteArrayId, ByteBuffer longBuffer) {
         longBuffer = initLongBuffer(longBuffer);
         
-        longBuffer.position(Long.BYTES - (byteArrayId.getBytes().length - 1));
+        for (int i = 0; i < (Long.BYTES - (byteArrayId.getBytes().length - 1)); i++)
+            longBuffer.put((byte) 0);
+        
         longBuffer.put(byteArrayId.getBytes(), 1, byteArrayId.getBytes().length - 1);
         return longBuffer.getLong(0);
     }
