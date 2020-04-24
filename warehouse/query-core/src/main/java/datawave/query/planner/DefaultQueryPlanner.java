@@ -51,6 +51,7 @@ import datawave.query.jexl.visitors.FixNegativeNumbersVisitor;
 import datawave.query.jexl.visitors.FixUnfieldedTermsVisitor;
 import datawave.query.jexl.visitors.FixUnindexedNumericTerms;
 import datawave.query.jexl.visitors.FunctionIndexQueryExpansionVisitor;
+import datawave.query.jexl.visitors.GeoWavePruningVisitor;
 import datawave.query.jexl.visitors.IsNotNullIntentVisitor;
 import datawave.query.jexl.visitors.JexlStringBuildingVisitor;
 import datawave.query.jexl.visitors.ParallelIndexExpansion;
@@ -1119,8 +1120,10 @@ public class DefaultQueryPlanner extends QueryPlanner {
                 if (log.isDebugEnabled()) {
                     logQuery(queryTree, "Query after expanding ranges:");
                 }
-                // TODO: Add a visitor which removes GeoWave geohashes which do not intersect with the query geometry
-
+                queryTree = GeoWavePruningVisitor.pruneTree(queryTree, metadataHelper);
+                if (log.isDebugEnabled()) {
+                    logQuery(queryTree, "Query after pruning GeoWave terms:");
+                }
                 queryTree = PushFunctionsIntoExceededValueRanges.pushFunctions(queryTree, metadataHelper, config.getDatatypeFilter());
                 if (log.isDebugEnabled()) {
                     logQuery(queryTree, "Query after expanding pushing functions into exceeded value ranges:");

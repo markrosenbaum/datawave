@@ -23,9 +23,37 @@ import java.util.List;
 public class GeoWaveUtils {
     
     /**
+     * This is a convenience class used within decomposeRange.
+     */
+    private static class TierMinMax {
+        public int tier;
+        public long min;
+        public long max;
+        
+        public TierMinMax(int tier, long min, long max) {
+            this.tier = tier;
+            this.min = min;
+            this.max = max;
+        }
+    }
+    
+    /**
+     * Ensures that the byte buffer is the right size, and has been cleared.
+     * 
+     * @param longBuffer
+     * @return
+     */
+    private static ByteBuffer initLongBuffer(ByteBuffer longBuffer) {
+        longBuffer = (longBuffer != null && longBuffer.array().length == Long.BYTES) ? longBuffer : ByteBuffer.allocate(Long.BYTES);
+        longBuffer.clear();
+        
+        return longBuffer;
+    }
+    
+    /**
      * Optimizes the list of byte array ranges needed to query the desired area. Portions of each range which do not intersect the original query polygon will
      * be pruned out.
-     * 
+     *
      * @param queryGeometry
      *            the original query geometry used to create the list of byte array ranges
      * @param byteArrayRanges
@@ -40,15 +68,61 @@ public class GeoWaveUtils {
      */
     public static List<ByteArrayRange> optimizeByteArrayRanges(Geometry queryGeometry, List<ByteArrayRange> byteArrayRanges, int rangeSplitThreshold,
                     double maxRangeOverlap) {
+        return optimizeByteArrayRanges(queryGeometry, byteArrayRanges, rangeSplitThreshold, maxRangeOverlap, null);
+    }
+    
+    /**
+     * Optimizes the list of byte array ranges needed to query the desired area. Portions of each range which do not intersect the original query polygon will
+     * be pruned out.
+     * 
+     * @param queryGeometry
+     *            the original query geometry used to create the list of byte array ranges
+     * @param byteArrayRanges
+     *            the original byte array ranges generated for the query geometry
+     * @param rangeSplitThreshold
+     *            used to determine the minimum number of segments to break a range into - higher values will take longer to computer, but will yield tighter
+     *            ranges
+     * @param maxRangeOverlap
+     *            the maximum amount of overlap a range is allowed to have compared to the envelope of the query geometry - expressed as a double between 0 and
+     *            1.
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
+     * @return a list of optimized byte array ranges
+     */
+    public static List<ByteArrayRange> optimizeByteArrayRanges(Geometry queryGeometry, List<ByteArrayRange> byteArrayRanges, int rangeSplitThreshold,
+                    double maxRangeOverlap, ByteBuffer longBuffer) {
+        longBuffer = initLongBuffer(longBuffer);
+        
         List<ByteArrayRange> optimizedRanges = new ArrayList<>();
         for (ByteArrayRange byteArrayRange : byteArrayRanges) {
             if (!byteArrayRange.isSingleValue()) {
-                optimizedRanges.addAll(optimizeByteArrayRange(queryGeometry, byteArrayRange, rangeSplitThreshold, maxRangeOverlap));
+                optimizedRanges.addAll(optimizeByteArrayRange(queryGeometry, byteArrayRange, rangeSplitThreshold, maxRangeOverlap, longBuffer));
             } else {
                 optimizedRanges.add(byteArrayRange);
             }
         }
         return optimizedRanges;
+    }
+    
+    /**
+     * Optimizes the list of byte array ranges needed to query the desired area. Portions of each range which do not intersect the original query polygon will
+     * be pruned out.
+     *
+     * @param queryGeometry
+     *            the original query geometry used to create the list of byte array ranges
+     * @param byteArrayRange
+     *            a byte array range representing a portion of the query geometry
+     * @param rangeSplitThreshold
+     *            used to determine the minimum number of segments to break a range into - higher values will take longer to computer, but will yield tighter
+     *            ranges
+     * @param maxRangeOverlap
+     *            the maximum amount of overlap a range is allowed to have compared to the envelope of the query geometry - expressed as a double between 0 and
+     *            1.
+     * @return a list of optimized byte array ranges
+     */
+    public static List<ByteArrayRange> optimizeByteArrayRange(Geometry queryGeometry, ByteArrayRange byteArrayRange, int rangeSplitThreshold,
+                    double maxRangeOverlap) {
+        return optimizeByteArrayRange(queryGeometry, byteArrayRange, rangeSplitThreshold, maxRangeOverlap, null);
     }
     
     /**
@@ -65,18 +139,21 @@ public class GeoWaveUtils {
      * @param maxRangeOverlap
      *            the maximum amount of overlap a range is allowed to have compared to the envelope of the query geometry - expressed as a double between 0 and
      *            1.
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
      * @return a list of optimized byte array ranges
      */
     public static List<ByteArrayRange> optimizeByteArrayRange(Geometry queryGeometry, ByteArrayRange byteArrayRange, int rangeSplitThreshold,
-                    double maxRangeOverlap) {
+                    double maxRangeOverlap, ByteBuffer longBuffer) {
         GeometryFactory gf = new GeometryFactory();
         List<ByteArrayRange> byteArrayRanges = new ArrayList<>();
         
-        int tier = decodeTier(byteArrayRange);
+        int tier = decodeTier(byteArrayRange.getStart());
         if (tier == 0) {
             byteArrayRanges.add(byteArrayRange);
         } else {
-            ByteBuffer longBuffer = ByteBuffer.allocate(Long.BYTES);
+            longBuffer = (longBuffer != null && longBuffer.array().length == Long.BYTES) ? longBuffer : ByteBuffer.allocate(Long.BYTES);
+            longBuffer.clear();
             
             long min = decodePosition(byteArrayRange.getStart(), longBuffer);
             long max = decodePosition(byteArrayRange.getEnd(), longBuffer);
@@ -185,7 +262,8 @@ public class GeoWaveUtils {
      * @return a list of merged ranges
      */
     public static List<ByteArrayRange> mergeContiguousRanges(List<ByteArrayRange> byteArrayRanges, ByteBuffer longBuffer) {
-        longBuffer = (longBuffer != null && longBuffer.array().length == Long.BYTES) ? longBuffer : ByteBuffer.allocate(Long.BYTES);
+        longBuffer = initLongBuffer(longBuffer);
+        
         List<ByteArrayRange> mergedByteArrayRanges = new ArrayList<>(byteArrayRanges.size());
         ByteArrayRange currentRange = null;
         
@@ -242,7 +320,8 @@ public class GeoWaveUtils {
      */
     public static List<ByteArrayRange> splitLargeRanges(List<ByteArrayRange> byteArrayRanges, Geometry queryGeometry, double maxRangeOverlap,
                     ByteBuffer longBuffer) {
-        longBuffer = (longBuffer != null && longBuffer.array().length == Long.BYTES) ? longBuffer : ByteBuffer.allocate(Long.BYTES);
+        longBuffer = initLongBuffer(longBuffer);
+        
         List<ByteArrayRange> splitByteArrayRanges = new ArrayList<>();
         
         for (ByteArrayRange range : byteArrayRanges) {
@@ -267,13 +346,13 @@ public class GeoWaveUtils {
     }
     
     /**
-     * Extracts the tier from the byteArrayRange
-     * 
-     * @param byteArrayRange
+     * Extracts the tier from the GeoWave geohash
+     *
+     * @param geohash
      * @return
      */
-    public static int decodeTier(ByteArrayRange byteArrayRange) {
-        return decodeTier(byteArrayRange.getStart());
+    public static int decodeTier(String geohash) {
+        return Integer.parseInt(geohash.substring(0, 2), 16);
     }
     
     /**
@@ -284,6 +363,16 @@ public class GeoWaveUtils {
      */
     public static int decodeTier(ByteArrayId byteArrayId) {
         return byteArrayId.getBytes()[0];
+    }
+    
+    /**
+     * Extracts the position from the GeoWave geohash
+     * 
+     * @param geohash
+     * @return
+     */
+    public static long decodePosition(String geohash) {
+        return Long.parseLong(geohash.substring(2), 16);
     }
     
     /**
@@ -305,8 +394,7 @@ public class GeoWaveUtils {
      * @return
      */
     public static long decodePosition(ByteArrayId byteArrayId, ByteBuffer longBuffer) {
-        longBuffer = (longBuffer != null && longBuffer.array().length == Long.BYTES) ? longBuffer : ByteBuffer.allocate(Long.BYTES);
-        longBuffer.clear();
+        longBuffer = initLongBuffer(longBuffer);
         
         longBuffer.position(Long.BYTES - (byteArrayId.getBytes().length - 1));
         longBuffer.put(byteArrayId.getBytes(), 1, byteArrayId.getBytes().length - 1);
@@ -328,14 +416,36 @@ public class GeoWaveUtils {
     }
     
     /**
-     * Creates a ByteArrayId from the given tier and position
+     * Creates a ByteArrayId from the given GeoWave geohash
      * 
+     * @param geohash
+     * @return
+     */
+    public static ByteArrayId createByteArrayId(String geohash) {
+        return createByteArrayId(geohash, null);
+    }
+    
+    /**
+     * Creates a ByteArrayId from the given tier and position
+     *
      * @param tier
      * @param position
      * @return
      */
     public static ByteArrayId createByteArrayId(int tier, long position) {
         return createByteArrayId(tier, position, null);
+    }
+    
+    /**
+     * Creates a ByteArrayId from the given GeoWave geohash
+     * 
+     * @param geohash
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
+     * @return
+     */
+    public static ByteArrayId createByteArrayId(String geohash, ByteBuffer longBuffer) {
+        return createByteArrayId(decodeTier(geohash), decodePosition(geohash), longBuffer);
     }
     
     /**
@@ -348,8 +458,7 @@ public class GeoWaveUtils {
      * @return
      */
     public static ByteArrayId createByteArrayId(int tier, long position, ByteBuffer longBuffer) {
-        longBuffer = (longBuffer != null && longBuffer.array().length == Long.BYTES) ? longBuffer : ByteBuffer.allocate(Long.BYTES);
-        longBuffer.clear();
+        longBuffer = initLongBuffer(longBuffer);
         
         ByteBuffer buffer = ByteBuffer.allocate(hexCharsPerTier(tier) / 2 + 1);
         buffer.put((byte) tier);
@@ -357,6 +466,17 @@ public class GeoWaveUtils {
         buffer.put(longBuffer.array(), longBuffer.capacity() - buffer.remaining(), buffer.remaining());
         
         return new ByteArrayId(buffer.array());
+    }
+    
+    /**
+     * Creates a ByteArrayRange from the given start and end GeoWave geohashes
+     * 
+     * @param startGeohash
+     * @param endGeohash
+     * @return
+     */
+    public static ByteArrayRange createByteArrayRange(String startGeohash, String endGeohash) {
+        return createByteArrayRange(startGeohash, endGeohash, null);
     }
     
     /**
@@ -372,6 +492,19 @@ public class GeoWaveUtils {
     }
     
     /**
+     * Creates a ByteArrayRange from the given start and end GeoWave geohashes
+     * 
+     * @param startGeohash
+     * @param endGeohash
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
+     * @return
+     */
+    public static ByteArrayRange createByteArrayRange(String startGeohash, String endGeohash, ByteBuffer longBuffer) {
+        return createByteArrayRange(decodeTier(startGeohash), decodePosition(startGeohash), decodePosition(endGeohash), longBuffer);
+    }
+    
+    /**
      * Creates a ByteArrayRange from the given tier, and min & max positions
      * 
      * @param tier
@@ -382,7 +515,7 @@ public class GeoWaveUtils {
      * @return
      */
     public static ByteArrayRange createByteArrayRange(int tier, long min, long max, ByteBuffer longBuffer) {
-        longBuffer = (longBuffer != null && longBuffer.array().length == Long.BYTES) ? longBuffer : ByteBuffer.allocate(Long.BYTES);
+        longBuffer = initLongBuffer(longBuffer);
         
         return new ByteArrayRange(createByteArrayId(tier, min, longBuffer), createByteArrayId(tier, max, longBuffer), min == max);
     }
@@ -393,7 +526,7 @@ public class GeoWaveUtils {
      * @param bounds
      * @return
      */
-    public static boolean inBounds(MultiDimensionalNumericData bounds) {
+    private static boolean inBounds(MultiDimensionalNumericData bounds) {
         // @formatter:off
         return bounds.getMinValuesPerDimension()[0] >= -180 && bounds.getMinValuesPerDimension()[0] <= 180 &&
                 bounds.getMaxValuesPerDimension()[0] >= -180 && bounds.getMaxValuesPerDimension()[0] <= 180 &&
@@ -403,17 +536,149 @@ public class GeoWaveUtils {
     }
     
     /**
+     * Given a GeoWave geohash position, this will generate a Geometry which represents that position.
+     * 
+     * @param geohash
+     * @return
+     */
+    public static Geometry positionToGeometry(String geohash) {
+        return positionToGeometry(geohash, null);
+    }
+    
+    /**
+     * Given a position at a given tier, this will generate a Geometry which represents that position.
+     * 
+     * @param tier
+     * @param position
+     * @return
+     */
+    public static Geometry positionToGeometry(int tier, long position) {
+        return positionToGeometry(tier, position, null);
+    }
+    
+    /**
+     * Given a GeoWave geohash position, this will generate a Geometry which represents that position.
+     * 
+     * @param geohash
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
+     * @return
+     */
+    public static Geometry positionToGeometry(String geohash, ByteBuffer longBuffer) {
+        longBuffer = initLongBuffer(longBuffer);
+        
+        return positionToGeometry(createByteArrayId(geohash, longBuffer));
+    }
+    
+    /**
+     * Given a position at a given tier, this will generate a Geometry which represents that position.
+     * 
+     * @param tier
+     * @param position
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
+     * @return
+     */
+    public static Geometry positionToGeometry(int tier, long position, ByteBuffer longBuffer) {
+        longBuffer = initLongBuffer(longBuffer);
+        
+        return positionToGeometry(createByteArrayId(tier, position, longBuffer));
+    }
+    
+    /**
+     * Given a byteArrayId, this will generate a Geometry which represents that position.
+     * 
+     * @param byteArrayId
+     * @return
+     */
+    public static Geometry positionToGeometry(ByteArrayId byteArrayId) {
+        MultiDimensionalNumericData bounds = GeometryNormalizer.indexStrategy.getRangeForId(byteArrayId);
+        
+        // @formatter:off
+        return new GeometryFactory().toGeometry(
+                new Envelope(
+                        bounds.getMinValuesPerDimension()[0],
+                        bounds.getMaxValuesPerDimension()[0],
+                        bounds.getMinValuesPerDimension()[1],
+                        bounds.getMaxValuesPerDimension()[1]));
+        // @formatter:on
+    }
+    
+    /**
+     * Given a range defined by the start and end geohashes, this will generate a Geometry which represents that range.
+     * 
+     * @param startGeohash
+     * @param endGeohash
+     * @return
+     */
+    public static Geometry rangeToGeometry(String startGeohash, String endGeohash) {
+        return rangeToGeometry(startGeohash, endGeohash, null);
+    }
+    
+    /**
+     * Given a range defined by the start and end geohashes, this will generate a Geometry which represents that range.
+     * 
+     * @param byteArrayRange
+     * @return
+     */
+    public static Geometry rangeToGeometry(ByteArrayRange byteArrayRange) {
+        return rangeToGeometry(byteArrayRange, null);
+    }
+    
+    /**
+     * Given a range at a given tier, this will generate a Geometry which represents that range.
+     *
+     * @param tier
+     * @param start
+     * @param end
+     * @return
+     */
+    public static Geometry rangeToGeometry(int tier, long start, long end) {
+        return rangeToGeometry(tier, start, end, null);
+    }
+    
+    /**
+     * Given a range defined by the start and end geohashes, this will generate a Geometry which represents that range.
+     * 
+     * @param startGeohash
+     * @param endGeohash
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
+     * @return
+     */
+    public static Geometry rangeToGeometry(String startGeohash, String endGeohash, ByteBuffer longBuffer) {
+        return rangeToGeometry(decodeTier(startGeohash), decodePosition(startGeohash), decodePosition(endGeohash), longBuffer);
+    }
+    
+    /**
+     * Given a range defined by byteArrayRange, this will generate a Geometry which represents that range.
+     * 
+     * @param byteArrayRange
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
+     * @return
+     */
+    public static Geometry rangeToGeometry(ByteArrayRange byteArrayRange, ByteBuffer longBuffer) {
+        return rangeToGeometry(decodeTier(byteArrayRange.getStart()), decodePosition(byteArrayRange.getStart()), decodePosition(byteArrayRange.getEnd()),
+                        longBuffer);
+    }
+    
+    /**
      * Given a range at a given tier, this will generate a Geometry which represents that range.
      * 
      * @param tier
-     * @param min
-     * @param max
+     * @param start
+     * @param end
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
      * @return
      */
-    public static Geometry rangeToGeometry(int tier, long min, long max) {
+    public static Geometry rangeToGeometry(int tier, long start, long end, ByteBuffer longBuffer) {
+        longBuffer = initLongBuffer(longBuffer);
+        
         GeometryFactory gf = new GeometryFactory();
         
-        List<ByteArrayId> byteArrayIds = decomposeRange(tier, min, max);
+        List<ByteArrayId> byteArrayIds = decomposeRange(tier, start, end, longBuffer);
         
         List<Geometry> geometries = new ArrayList<>(byteArrayIds.size());
         for (ByteArrayId byteArrayId : byteArrayIds) {
@@ -435,18 +700,45 @@ public class GeoWaveUtils {
     }
     
     /**
-     * This is a convenience class used within decomposeRange.
+     * This performs a sort of quad-tree decomposition on the given range. This algorithm searched for subranges within the original range which can be
+     * represented in a simplified fashion at a lower granularity tier. The resulting list of byteArrayRanges will consist of an equivalent set of ranges,
+     * spread out across multiple tiers, which is topologically equivalent to the footprint of the original range.
+     *
+     * @param startGeohash
+     * @param endGeohash
+     * @return
      */
-    private static class TierMinMax {
-        public int tier;
-        public long min;
-        public long max;
-        
-        public TierMinMax(int tier, long min, long max) {
-            this.tier = tier;
-            this.min = min;
-            this.max = max;
-        }
+    public static List<ByteArrayId> decomposeRange(String startGeohash, String endGeohash) {
+        return decomposeRange(startGeohash, endGeohash, null);
+    }
+    
+    /**
+     * This performs a sort of quad-tree decomposition on the given range. This algorithm searched for subranges within the original range which can be
+     * represented in a simplified fashion at a lower granularity tier. The resulting list of byteArrayRanges will consist of an equivalent set of ranges,
+     * spread out across multiple tiers, which is topologically equivalent to the footprint of the original range.
+     *
+     * @param tier
+     * @param start
+     * @param end
+     * @return
+     */
+    public static List<ByteArrayId> decomposeRange(int tier, long start, long end) {
+        return decomposeRange(tier, start, end, null);
+    }
+    
+    /**
+     * This performs a sort of quad-tree decomposition on the given range. This algorithm searched for subranges within the original range which can be
+     * represented in a simplified fashion at a lower granularity tier. The resulting list of byteArrayRanges will consist of an equivalent set of ranges,
+     * spread out across multiple tiers, which is topologically equivalent to the footprint of the original range.
+     *
+     * @param startGeohash
+     * @param endGeohash
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
+     * @return
+     */
+    public static List<ByteArrayId> decomposeRange(String startGeohash, String endGeohash, ByteBuffer longBuffer) {
+        return decomposeRange(decodeTier(startGeohash), decodePosition(startGeohash), decodePosition(endGeohash), longBuffer);
     }
     
     /**
@@ -455,16 +747,19 @@ public class GeoWaveUtils {
      * spread out across multiple tiers, which is topologically equivalent to the footprint of the original range.
      * 
      * @param tier
-     * @param min
-     * @param max
+     * @param start
+     * @param end
+     * @param longBuffer
+     *            a reusable byte buffer of Long.BYTES length
      * @return
      */
-    public static List<ByteArrayId> decomposeRange(int tier, long min, long max) {
+    public static List<ByteArrayId> decomposeRange(int tier, long start, long end, ByteBuffer longBuffer) {
+        longBuffer = initLongBuffer(longBuffer);
+        
         List<ByteArrayId> byteArrayIds = new ArrayList<>();
-        ByteBuffer longBuffer = ByteBuffer.allocate(Long.BYTES);
         
         LinkedList<TierMinMax> queue = new LinkedList<>();
-        queue.push(new TierMinMax(0, min, max));
+        queue.push(new TierMinMax(0, start, end));
         
         while (!queue.isEmpty()) {
             TierMinMax tierMinMax = queue.pop();
